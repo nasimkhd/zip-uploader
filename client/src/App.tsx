@@ -1,8 +1,12 @@
 import { useMemo, useState } from 'react'
 import './App.css'
 import { uploadZip } from './api'
+import StagingFiles from './StagingFiles'
+
+type Page = 'upload' | 'staging'
 
 function App() {
+  const [currentPage, setCurrentPage] = useState<Page>('upload')
   const [file, setFile] = useState<File | null>(null)
   const [message, setMessage] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
@@ -38,21 +42,57 @@ function App() {
   }
 
   return (
-    <>
-      <h1>Zip File Uploader</h1>
-      <form onSubmit={handleSubmit}>
-        <input
-          id="zip-input"
-          type="file"
-          accept=".zip,application/zip,application/x-zip-compressed"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        />
-        <button type="submit" disabled={!file || !isZip || isUploading}>
-          {isUploading ? 'Uploading...' : 'Upload'}
-        </button>
-      </form>
-      {message && <p>{message}</p>}
-    </>
+    <div className="app-container">
+      <nav className="nav-container">
+        <div className="nav-buttons">
+          <button 
+            onClick={() => setCurrentPage('upload')}
+            className={`nav-button ${currentPage === 'upload' ? 'active' : ''}`}
+          >
+            Upload Files
+          </button>
+          <button 
+            onClick={() => setCurrentPage('staging')}
+            className={`nav-button ${currentPage === 'staging' ? 'active' : ''}`}
+          >
+            View Staging Files
+          </button>
+        </div>
+      </nav>
+
+      <div className="page-content">
+        {currentPage === 'upload' ? (
+          <div className="upload-container">
+            <h1 className="upload-title">Zip File Uploader</h1>
+            <form onSubmit={handleSubmit} className="upload-form">
+              <div className="file-input-container">
+                <input
+                  id="zip-input"
+                  type="file"
+                  accept=".zip,application/zip,application/x-zip-compressed"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  className="file-input"
+                />
+              </div>
+              <button 
+                type="submit" 
+                disabled={!file || !isZip || isUploading}
+                className="upload-button"
+              >
+                {isUploading ? 'Uploading...' : 'Upload'}
+              </button>
+            </form>
+            {message && (
+              <div className={`message ${message.includes('Uploaded') ? 'success' : 'error'}`}>
+                {message}
+              </div>
+            )}
+          </div>
+        ) : (
+          <StagingFiles />
+        )}
+      </div>
+    </div>
   )
 }
 

@@ -1,28 +1,27 @@
+require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const morgan = require('morgan')
 const multer = require('multer')
 const fs = require('fs')
 const path = require('path')
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3')
+const { S3Client, PutObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3')
 
 const app = express()
 const PORT = process.env.PORT || 4000
 
-// Cloudflare R2 Configuration
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'kampus-incoming'
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://dash.cloudflare.com/4a376646b3e39a27c7c4a28ff40f9deb/r2/default/buckets/kampus-incoming'
+// AWS S3 Configuration
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1'
+const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'my-upload-bucket-zip'
 
-// Initialize S3 client for Cloudflare R2
+// Initialize S3 client for AWS S3
 const s3Client = new S3Client({
-  region: 'auto',
-  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  region: AWS_REGION,
   credentials: {
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
+    accessKeyId: AWS_ACCESS_KEY_ID,
+    secretAccessKey: AWS_SECRET_ACCESS_KEY,
   },
 })
 
@@ -53,7 +52,7 @@ const allowedMime = new Set([
 
 const upload = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB limit
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase()
     if (ext === '.zip' || allowedMime.has(file.mimetype)) {
@@ -65,6 +64,41 @@ const upload = multer({
 })
 
 app.get('/healthz', (req, res) => res.json({ ok: true }))
+
+// List files from staging folder
+app.get('/staging-files', async (req, res) => {
+  try {
+    // Check if AWS S3 credentials are configured
+    if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
+      console.error('AWS S3 credentials not configured')
+      return res.status(500).json({ error: 'AWS S3 storage not configured' })
+    }
+
+    // List objects in staging folder
+    const listParams = {
+      Bucket: S3_BUCKET_NAME,
+      Prefix: 'staging/',
+    }
+
+    console.log('Listing files from staging folder:', listParams.Prefix)
+    const listResult = await s3Client.send(new ListObjectsV2Command(listParams))
+
+    const files = (listResult.Contents || []).map(obj => ({
+      key: obj.Key,
+      filename: obj.Key.replace('staging/', ''),
+      size: obj.Size,
+      lastModified: obj.LastModified,
+      etag: obj.ETag,
+      url: `https://${S3_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/${obj.Key}`,
+    }))
+
+    console.log(`Found ${files.length} files in staging folder`)
+    return res.json({ files })
+  } catch (error) {
+    console.error('Error listing staging files:', error)
+    return res.status(500).json({ error: 'Failed to list staging files', details: error.message })
+  }
+})
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
@@ -79,24 +113,24 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
     
-    // Check if R2 credentials are configured
-    if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
-      console.error('R2 credentials not configured')
-      return res.status(500).json({ error: 'R2 storage not configured' })
+    // Check if AWS S3 credentials are configured
+    if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
+      console.error('AWS S3 credentials not configured')
+      return res.status(500).json({ error: 'AWS S3 storage not configured' })
     }
     
     // Read the uploaded file
     const fileBuffer = fs.readFileSync(req.file.path)
     
-    // Upload to Cloudflare R2
+    // Upload to AWS S3
     const uploadParams = {
-      Bucket: R2_BUCKET_NAME,
+      Bucket: S3_BUCKET_NAME,
       Key: `uploads/${req.file.filename}`,
       Body: fileBuffer,
       ContentType: req.file.mimetype,
     }
     
-    console.log('Uploading to R2:', uploadParams.Key)
+    console.log('Uploading to S3:', uploadParams.Key)
     const uploadResult = await s3Client.send(new PutObjectCommand(uploadParams))
     
     // Clean up temporary file
@@ -104,8 +138,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     const result = {
       filename: req.file.filename,
-      r2Key: uploadParams.Key,
-      r2Url: `${R2_PUBLIC_URL}?prefix=uploads%2F`,
+      s3Key: uploadParams.Key,
+      s3Url: `https://${S3_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/${uploadParams.Key}`,
       etag: uploadResult.ETag,
     }
     
@@ -135,8 +169,9 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`)
   console.log(`Temporary directory: ${tempDir}`)
-  console.log(`R2 Bucket: ${R2_BUCKET_NAME}`)
-  console.log(`R2 configured: ${!!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY)}`)
+  console.log(`S3 Bucket: ${S3_BUCKET_NAME}`)
+  console.log(`AWS Region: ${AWS_REGION}`)
+  console.log(`S3 configured: ${!!(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY)}`)
 })
 
 
