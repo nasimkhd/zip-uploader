@@ -182,28 +182,141 @@ async function abortMultipartUpload(request, env) {
   };
 }
 
+// Recursive search endpoint
+async function searchFiles(request, env) {
+  const url = new URL(request.url);
+  const rawPrefix = url.searchParams.get('prefix') || 'unzipped/';
+  const q = (url.searchParams.get('q') || '').trim();
+  const rawLimit = url.searchParams.get('limit');
+  const cursor = url.searchParams.get('cursor') || undefined;
+
+  if (!q) {
+    return {
+      prefix: 'unzipped/',
+      q: '',
+      files: [],
+      truncated: false,
+      cursor: null
+    };
+  }
+
+  // Normalize and secure prefix - must live under unzipped/
+  let prefix = decodeURIComponent(rawPrefix);
+  if (!prefix.startsWith('unzipped/')) {
+    throw new Error('Invalid prefix');
+  }
+  if (!prefix.endsWith('/')) {
+    prefix = prefix + '/';
+  }
+
+  // Limit bounds [1, 500]
+  let limit = 50;
+  if (rawLimit) {
+    const parsed = parseInt(rawLimit, 10);
+    if (!Number.isNaN(parsed)) {
+      limit = Math.max(1, Math.min(500, parsed));
+    }
+  }
+
+  // Perform recursive listing (omit delimiter) and filter by query
+  const queryLower = q.toLowerCase();
+  let matches = [];
+  let nextCursor = cursor;
+  let lastCursor = null;
+  let anyTruncated = false;
+
+  // Safeguard: do at most 10 pages per request to bound latency
+  let pagesScanned = 0;
+  const MAX_PAGES = 10;
+
+  while (matches.length < limit && pagesScanned < MAX_PAGES) {
+    const listResult = await env.R2_BUCKET_NAME.list({
+      prefix,
+      // no delimiter => recursive
+      limit: 1000,
+      cursor: nextCursor,
+    });
+    pagesScanned++;
+    anyTruncated = !!listResult.truncated;
+    lastCursor = listResult.cursor || null;
+
+    const pageMatches = (listResult.objects || []).filter(obj =>
+      obj.key && obj.key.toLowerCase().includes(queryLower)
+    ).map(obj => ({
+      key: obj.key,
+      filename: obj.key.split('/').pop(),
+      size: obj.size,
+      lastModified: obj.uploaded,
+      etag: obj.etag,
+    }));
+
+    for (const m of pageMatches) {
+      matches.push(m);
+      if (matches.length >= limit) break;
+    }
+
+    if (!listResult.truncated || matches.length >= limit) {
+      break;
+    }
+    nextCursor = listResult.cursor;
+  }
+
+  return {
+    prefix,
+    q,
+    files: matches.slice(0, limit),
+    truncated: anyTruncated,
+    cursor: anyTruncated ? (lastCursor || null) : null,
+  };
+}
+
 // List files endpoint
 async function listFiles(request, env) {
-  const prefix = 'unzipped/';
-  const limit = 1000; // R2 limit
-  
-  const objects = await env.R2_BUCKET_NAME.list({
+  const url = new URL(request.url);
+  const rawPrefix = url.searchParams.get('prefix') || 'unzipped/';
+  const rawLimit = url.searchParams.get('limit');
+  const cursor = url.searchParams.get('cursor') || undefined;
+
+  // Normalize and secure prefix - must live under unzipped/
+  let prefix = decodeURIComponent(rawPrefix);
+  if (!prefix.startsWith('unzipped/')) {
+    throw new Error('Invalid prefix');
+  }
+  if (!prefix.endsWith('/')) {
+    prefix = prefix + '/';
+  }
+
+  // Limit bounds [1, 1000]
+  let limit = 1000;
+  if (rawLimit) {
+    const parsed = parseInt(rawLimit, 10);
+    if (!Number.isNaN(parsed)) {
+      limit = Math.max(1, Math.min(1000, parsed));
+    }
+  }
+
+  const listResult = await env.R2_BUCKET_NAME.list({
     prefix,
-    limit
+    delimiter: '/',
+    limit,
+    cursor
   });
-  
-  const files = objects.objects.map(obj => ({
+
+  const folders = Array.isArray(listResult.delimitedPrefixes) ? listResult.delimitedPrefixes : [];
+  const files = (listResult.objects || []).map(obj => ({
     key: obj.key,
     filename: obj.key.split('/').pop(),
     size: obj.size,
     lastModified: obj.uploaded,
     etag: obj.etag
   }));
-  
+
   return {
+    prefix,
+    folders,
     files,
-    count: files.length,
-    prefix
+    truncated: !!listResult.truncated,
+    cursor: listResult.truncated ? (listResult.cursor || null) : null
   };
 }
 
@@ -309,6 +422,15 @@ async function handleAPI(request, env) {
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
         
+      case '/api/search':
+        if (request.method === 'GET') {
+          const searchResult = await searchFiles(request, env);
+          return new Response(JSON.stringify(searchResult), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+        throw new Error('Method not allowed');
+
       case '/api/files':
         if (request.method === 'GET') {
           const filesResult = await listFiles(request, env);
@@ -393,6 +515,7 @@ export default {
         'POST /api/upload/multipart/part',
         'POST /api/upload/multipart/complete',
         'POST /api/upload/multipart/abort',
+        'GET /api/search',
         'GET /api/files',
         'DELETE /api/files/{key}'
       ]

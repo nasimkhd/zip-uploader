@@ -1,0 +1,43 @@
+# 30 AM - Tasks Completed (Nasim)
+
+- Split monolithic worker into two services:
+  - Backend: `zip-uploader-worker`
+  - Frontend: `zip-uploader-frontend`
+- Implemented backend with Cloudflare R2 bindings:
+  - Simple upload: `POST /api/upload` (streamed, <100MB)
+  - Multipart upload: `POST /api/upload/multipart/{init,part,complete,abort}`
+  - File listing: `GET /api/files`
+  - File download: `GET /api/files/{key}`
+  - File delete: `DELETE /api/files/{key}`
+- Frontend upload UI updates:
+  - Embedded `UploadManager` in page to avoid global reference errors
+  - Chunking (8MB) with 5 concurrent uploads and progress tracking
+  - Injected `BACKEND_WORKER_URL` via worker env; removed hard-coded values
+- Removed authentication requirement (API key) end-to-end:
+  - Dropped API key headers and checks in backend and frontend
+  - Simplified CORS allow headers
+- Configuration fixes and cleanups:
+  - Set `BACKEND_WORKER_URL` to `https://zip-uploader-worker.andrea-4a3.workers.dev` to fix 404s
+  - Cleaned repository: removed root `wrangler.toml`, monolithic `src/index.js`, `src/index-clean.js`, `dev-server.js`, `r2-cors.json`, `set-r2-cors.md`, root `package.json`, `package-lock.json`, and root `node_modules/`
+  - Updated `deploy.sh` (no legacy worker, no API key steps)
+  - Updated `README.md` to reflect two-worker architecture and no API key auth
+- Linting: verified no linter errors in updated worker files
+
+- Frontend SPA and persistent upload UX:
+  - Unified `/upload` and `/files` into a single-page app (no full reloads)
+  - Added client-side router to toggle views and intercept navigation
+  - Ongoing uploads continue while switching to Files view; progress persists
+  - Integrated Files list, download, and delete actions into the same page
+  - UI tweak: header shortened to "🚀 File Uploader"
+  - Linting: verified no linter errors after SPA updates
+
+- Files browsing and UX enhancements:
+  - Converted flat list to breadcrumb + current-folder view mirroring `unzipped/`
+  - Backend `GET /api/files` now supports `prefix`, `cursor`, `limit`, uses `delimiter: '/'`, and enforces `unzipped/` root
+  - Breadcrumb navigation with `history.pushState` and `popstate` support
+  - Pagination UI with Prev/Next (page size 10) using R2 cursors, per-page cursor cache
+  - Toolbar: client-side search filter and sort (name/date/size)
+  - Hidden special items starting with `__` (e.g., `__MACOSX/`)
+  - Replaced fragile inline `onclick` with data-attributes + delegated handlers
+  - Fixed quoting SyntaxError and a return/newline rendering bug (empty list)
+  - Linting: verified no errors after changes
