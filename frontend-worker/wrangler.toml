@@ -1,0 +1,12 @@
+name = "zip-uploader-frontend"
+main = "src/index.js"
+compatibility_date = "2024-01-15"
+account_id = "4a376646b3e39a27c7c4a28ff40f9deb"
+
+# Environment variables
+[vars]
+BACKEND_WORKER_URL = "https://zip-uploader-worker.andrea-4a3.workers.dev"
+MAX_FILE_SIZE = "5368709120"  # 5GB in bytes
+CHUNK_SIZE = "8388608"        # 8MB in bytes
+MAX_CONCURRENT_UPLOADS = "5"
+
