@@ -8,6 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Expose-Headers': 'ETag, X-Checksum-SHA256',
 };
 
 // Handle CORS preflight requests
@@ -49,6 +50,7 @@ function validateFile(file, env) {
 async function handleSimpleUpload(request, env) {
   const formData = await request.formData();
   const file = formData.get('file');
+  const providedSha256 = formData.get('sha256');
   
   if (!file) {
     throw new Error('No file provided');
@@ -60,16 +62,22 @@ async function handleSimpleUpload(request, env) {
   const key = `uploads/${filename}`;
   
   // Upload directly to R2 using binding
+  // Build metadata (include sha256 if provided)
+  const customMetadata = {
+    originalName: file.name,
+    uploadedAt: new Date().toISOString(),
+    uploadType: 'simple'
+  };
+  if (providedSha256 && typeof providedSha256 === 'string') {
+    customMetadata.sha256 = providedSha256;
+  }
+
   await env.R2_BUCKET_NAME.put(key, file.stream(), {
     httpMetadata: { 
       contentType: file.type || 'application/zip',
       cacheControl: 'public, max-age=3600'
     },
-    customMetadata: {
-      originalName: file.name,
-      uploadedAt: new Date().toISOString(),
-      uploadType: 'simple'
-    }
+    customMetadata
   });
   
   return {
@@ -83,7 +91,7 @@ async function handleSimpleUpload(request, env) {
 
 // Multipart upload handlers
 async function initiateMultipartUpload(request, env) {
-  const { filename, size, contentType } = await request.json();
+  const { filename, size, contentType, sha256 } = await request.json();
   
   if (!filename || !size) {
     throw new Error('Filename and size are required');
@@ -103,11 +111,15 @@ async function initiateMultipartUpload(request, env) {
       contentType: contentType || 'application/zip',
       cacheControl: 'public, max-age=3600'
     },
-    customMetadata: {
-      originalName: filename,
-      uploadedAt: new Date().toISOString(),
-      uploadType: 'multipart'
-    }
+    customMetadata: (function(){
+      const meta = {
+        originalName: filename,
+        uploadedAt: new Date().toISOString(),
+        uploadType: 'multipart'
+      };
+      if (sha256 && typeof sha256 === 'string') meta.sha256 = sha256;
+      return meta;
+    })()
   });
   
   return {
@@ -185,14 +197,14 @@ async function abortMultipartUpload(request, env) {
 // Recursive search endpoint
 async function searchFiles(request, env) {
   const url = new URL(request.url);
-  const rawPrefix = url.searchParams.get('prefix') || 'unzipped/';
+  const rawPrefix = url.searchParams.get('prefix') || 'feeds/';
   const q = (url.searchParams.get('q') || '').trim();
   const rawLimit = url.searchParams.get('limit');
   const cursor = url.searchParams.get('cursor') || undefined;
 
   if (!q) {
     return {
-      prefix: 'unzipped/',
+      prefix: 'feeds/',
       q: '',
       files: [],
       truncated: false,
@@ -200,9 +212,9 @@ async function searchFiles(request, env) {
     };
   }
 
-  // Normalize and secure prefix - must live under unzipped/
+  // Normalize and secure prefix - must live under feeds/
   let prefix = decodeURIComponent(rawPrefix);
-  if (!prefix.startsWith('unzipped/')) {
+  if (!prefix.startsWith('feeds/')) {
     throw new Error('Invalid prefix');
   }
   if (!prefix.endsWith('/')) {
@@ -273,13 +285,13 @@ async function searchFiles(request, env) {
 // List files endpoint
 async function listFiles(request, env) {
   const url = new URL(request.url);
-  const rawPrefix = url.searchParams.get('prefix') || 'unzipped/';
+  const rawPrefix = url.searchParams.get('prefix') || 'feeds/';
   const rawLimit = url.searchParams.get('limit');
   const cursor = url.searchParams.get('cursor') || undefined;
 
-  // Normalize and secure prefix - must live under unzipped/
+  // Normalize and secure prefix - must live under feeds/
   let prefix = decodeURIComponent(rawPrefix);
-  if (!prefix.startsWith('unzipped/')) {
+  if (!prefix.startsWith('feeds/')) {
     throw new Error('Invalid prefix');
   }
   if (!prefix.endsWith('/')) {
@@ -467,9 +479,11 @@ async function handleAPI(request, env) {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
             'Access-Control-Allow-Headers': '*',
+            'Access-Control-Expose-Headers': 'ETag, X-Checksum-SHA256',
             'Cache-Control': 'public, max-age=3600',
           };
           if (obj.etag) headers['ETag'] = obj.etag;
+          if (obj.customMetadata && obj.customMetadata.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
           return new Response(obj.body, { headers });
         }
         throw new Error('Endpoint not found');

@@ -24,7 +24,7 @@
 - Linting: verified no linter errors in updated worker files
 
 - Frontend SPA and persistent upload UX:
-  - Unified `/upload` and `/files` into a single-page app (no full reloads)
+  - Unified `/upload` and `/files` into a single-page app
   - Added client-side router to toggle views and intercept navigation
   - Ongoing uploads continue while switching to Files view; progress persists
   - Integrated Files list, download, and delete actions into the same page
