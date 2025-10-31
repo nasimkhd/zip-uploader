@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Cloudflare Worker
 .wrangler/
@@ -8,10 +7,16 @@ package-lock.json
 # Environment variables
 .env
 .env.local
+.dev.vars
+.env.*
+!.env.example
 
 # Logs
 *.log
 npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # OS generated files
 .DS_Store
@@ -31,3 +36,26 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Build outputs
+dist/
+build/
+.cache/
+.parcel-cache/
+
+# Test coverage
+coverage/
+
+# Node REPL history
+.node_repl_history
+
+# Yarn PnP
+.pnp.*
+
+# ESLint cache
+.eslintcache
+
+# Security-sensitive key/cert files
+*.pem
+*.key
+*.crt
