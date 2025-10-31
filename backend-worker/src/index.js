@@ -453,6 +453,29 @@ async function handleAPI(request, env) {
         throw new Error('Method not allowed');
         
       default:
+        if (pathname.startsWith('/api/files-inline/') && request.method === 'GET') {
+          const key = decodeURIComponent(pathname.replace('/api/files-inline/', ''));
+          if (!key) {
+            throw new Error('File key is required');
+          }
+          const obj = await env.R2_BUCKET_NAME.get(key);
+          if (!obj) {
+            return new Response(JSON.stringify({ error: 'File not found' }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            });
+          }
+          const filename = key.split('/').pop() || 'file';
+          const headers = {
+            'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
+            'Content-Disposition': `inline; filename="${filename}"`,
+            ...corsHeaders,
+            'Cache-Control': 'public, max-age=3600',
+          };
+          if (obj.etag) headers['ETag'] = obj.etag;
+          if (obj.customMetadata && obj.customMetadata.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
+          return new Response(obj.body, { headers });
+        }
         if (pathname.startsWith('/api/files/') && request.method === 'DELETE') {
           const deleteResult = await deleteFile(request, env);
           return new Response(JSON.stringify(deleteResult), {

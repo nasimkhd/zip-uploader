@@ -157,6 +157,22 @@ function getAppPage(env) {
       </div>
     </div>
 
+    <div id="viewerModal" class="modal" style="display:none;">
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="viewerTitle">
+        <div class="modal-header">
+          <div id="viewerTitle" class="modal-title">Preview</div>
+          <div class="modal-actions">
+            <a id="viewerOpenNewTab" class="btn" target="_blank" rel="noopener">Open in new tab</a>
+            <button id="viewerClose" class="btn">Close</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <iframe id="viewerFrame" class="viewer-iframe" style="display:none;"></iframe>
+          <pre id="viewerPre" class="viewer-pre" style="display:none;"></pre>
+        </div>
+      </div>
+    </div>
+
     <script>window.__CONFIG__ = { BACKEND_URL: ${JSON.stringify(BACKEND_URL)} };</script>
     <script defer src="/assets/app.js"></script>
 </body>

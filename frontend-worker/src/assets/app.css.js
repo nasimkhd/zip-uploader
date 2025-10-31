@@ -110,6 +110,16 @@ body {
 .download-button { border-color: rgba(59,130,246,0.5); color: #93c5fd; }
 .delete-button { border-color: rgba(239,68,68,0.5); color: #fca5a5; }
 .loading, .no-files { text-align: center; padding: 24px; color: var(--muted); }
+
+/* Modal viewer */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: grid; place-items: center; z-index: 1000; }
+.modal-dialog { width: min(100%, 960px); max-height: min(90vh, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-strong); }
+.modal-title { font-weight: 700; }
+.modal-actions { display: flex; gap: 8px; }
+.modal-body { padding: 0; height: 70vh; background: var(--surface); }
+.viewer-iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.viewer-pre { width: 100%; height: 100%; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; word-wrap: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: #0b0f1a; color: #e6e8f1; }
 `;
 
 
