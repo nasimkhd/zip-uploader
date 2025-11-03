@@ -3,9 +3,22 @@ main = "src/index.js"
 compatibility_date = "2024-01-15"
 account_id = "4a376646b3e39a27c7c4a28ff40f9deb"
 
-# Environment variables
+# Environment variables (Production/Default)
 [vars]
 BACKEND_WORKER_URL = "https://zip-uploader-worker.andrea-4a3.workers.dev"
+MAX_FILE_SIZE = "5368709120"  # 5GB in bytes
+CHUNK_SIZE = "8388608"        # 8MB in bytes
+MAX_CONCURRENT_UPLOADS = "5"
+
+# Secrets (set these via wrangler secret put)
+# Production secrets: wrangler secret put SECRET_NAME
+# Staging secrets: wrangler secret put SECRET_NAME --env staging
+
+# Staging Environment Configuration
+[env.staging]
+# Environment variables for staging
+[env.staging.vars]
+BACKEND_WORKER_URL = "https://zip-uploader-worker-staging.andrea-4a3.workers.dev"
 MAX_FILE_SIZE = "5368709120"  # 5GB in bytes
 CHUNK_SIZE = "8388608"        # 8MB in bytes
 MAX_CONCURRENT_UPLOADS = "5"

@@ -17,6 +17,8 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+logs/
+!logs/.gitkeep
 
 # OS generated files
 .DS_Store
@@ -62,3 +64,4 @@ coverage/
 
 # Large files not to commit
 Ames_soeurs.zip
+Docs/

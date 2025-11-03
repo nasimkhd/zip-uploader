@@ -58,6 +58,7 @@ async function serveStaticFile(request, env) {
 // Unified single-page app containing both Upload and Files views
 function getAppPage(env) {
   const BACKEND_URL = env.BACKEND_WORKER_URL || '';
+  const API_KEY = env.API_KEY_PUBLIC || '';
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -173,7 +174,7 @@ function getAppPage(env) {
       </div>
     </div>
 
-    <script>window.__CONFIG__ = { BACKEND_URL: ${JSON.stringify(BACKEND_URL)} };</script>
+    <script>window.__CONFIG__ = { BACKEND_URL: ${JSON.stringify(BACKEND_URL)}, API_KEY: ${JSON.stringify(API_KEY)} };</script>
     <script defer src="/assets/app.js"></script>
 </body>
 </html>

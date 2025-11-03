@@ -3,16 +3,31 @@ main = "src/index.js"
 compatibility_date = "2024-01-15"
 account_id = "4a376646b3e39a27c7c4a28ff40f9deb"
 
-# R2 Bucket binding for direct access
+# R2 Bucket binding for direct access (Production/Default)
 [[r2_buckets]]
 binding = "R2_BUCKET_NAME"
 bucket_name = "kampus-incoming"
 
-# Environment variables
+# Environment variables (Production/Default)
 [vars]
 MAX_FILE_SIZE = "5368709120"  # 5GB in bytes
 CHUNK_SIZE = "8388608"        # 8MB in bytes
 MAX_CONCURRENT_UPLOADS = "5"
 
 # Secrets (set these via wrangler secret put)
+# Production secrets: wrangler secret put SECRET_NAME
+# Staging secrets: wrangler secret put SECRET_NAME --env staging
+
+# Staging Environment Configuration
+[env.staging]
+# R2 Bucket binding for staging
+[[env.staging.r2_buckets]]
+binding = "R2_BUCKET_NAME"
+bucket_name = "kampus-incoming"  # Using same bucket, or change to "kampus-incoming-staging" for isolation
+
+# Environment variables for staging
+[env.staging.vars]
+MAX_FILE_SIZE = "5368709120"  # 5GB in bytes
+CHUNK_SIZE = "8388608"        # 8MB in bytes
+MAX_CONCURRENT_UPLOADS = "5"
 

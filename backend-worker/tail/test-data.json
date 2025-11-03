@@ -1,0 +1,89 @@
+/**
+ * Sample wrangler tail JSON logs for testing the parser
+ */
+
+[
+  {
+    "timestamp": "2025-11-03T14:22:15.123Z",
+    "request": {
+      "method": "POST",
+      "url": "https://zip-uploader-worker.example.workers.dev/api/upload"
+    },
+    "response": {
+      "status": 200
+    },
+    "outcome": {
+      "ok": true,
+      "duration": 145
+    },
+    "logs": [
+      {
+        "level": "info",
+        "message": ["File uploaded successfully", "key: uploads/123-test.zip"]
+      }
+    ]
+  },
+  {
+    "timestamp": "2025-11-03T14:22:16.456Z",
+    "event": {
+      "request": {
+        "method": "GET"
+      }
+    },
+    "logs": [
+      {
+        "level": "info",
+        "message": ["Worker: onix-generator", "Event: onix-complete"]
+      }
+    ]
+  },
+  {
+    "timestamp": "2025-11-03T14:22:17.789Z",
+    "request": {
+      "method": "POST",
+      "url": "https://zip-uploader-worker.example.workers.dev/api/search"
+    },
+    "response": {
+      "status": 400
+    },
+    "outcome": {
+      "ok": false,
+      "duration": 23
+    },
+    "logs": [
+      {
+        "level": "error",
+        "message": "Invalid query parameter"
+      }
+    ]
+  },
+  {
+    "timestamp": "2025-11-03T14:22:18.012Z",
+    "request": {
+      "method": "OPTIONS",
+      "url": "https://zip-uploader-worker.example.workers.dev/api/upload"
+    },
+    "response": {
+      "status": 200
+    },
+    "outcome": {
+      "ok": true,
+      "duration": 2
+    }
+  },
+  {
+    "timestamp": "2025-11-03T14:22:19.345Z",
+    "request": {
+      "method": "GET",
+      "url": "https://zip-uploader-worker.example.workers.dev/"
+    },
+    "response": {
+      "status": 200
+    },
+    "outcome": {
+      "ok": true,
+      "duration": 5
+    }
+  }
+]
+

@@ -3,13 +3,8 @@
  * Handles multipart uploads to R2 using bindings
  */
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers': 'ETag, X-Checksum-SHA256',
-};
+import { withAuth, getCorrelationId, corsHeaders } from './auth.js';
+import { logError, logInfo } from './logging.js';
 
 // Handle CORS preflight requests
 function handleCORS(request) {
@@ -23,12 +18,113 @@ function handleCORS(request) {
 
 // No authentication required
 
+// Publisher management functions
+function normalizePublisherName(name) {
+  if (!name || typeof name !== 'string') return 'unknown';
+  
+  // Remove accents and special characters
+  let normalized = name
+    .normalize('NFD') // Decompose characters (É -> E + ́)
+    .replace(/[\u0300-\u036f]/g, '') // Remove combining diacritical marks
+    .replace(/\s+/g, '_') // Replace spaces with underscores
+    .replace(/[^a-zA-Z0-9-_]/g, '') // Remove any remaining special characters
+    .toLowerCase();
+  
+  if (!normalized || normalized.length === 0) return 'unknown';
+  return normalized;
+}
+
+function generatePublisherGUID() {
+  // Generate a 10-digit numeric GUID
+  const min = 1000000000; // 10 digits minimum
+  const max = 9999999999; // 10 digits maximum
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function getOrCreatePublisher(displayName, env) {
+  const normalizedName = normalizePublisherName(displayName);
+  const publisherKey = `publishers/${normalizedName}.json`;
+  
+  try {
+    // Try to get existing publisher
+    const existing = await env.R2_BUCKET_NAME.get(publisherKey);
+    if (existing) {
+      const publisher = await existing.json();
+      return publisher;
+    }
+  } catch (error) {
+    // Publisher doesn't exist, create new one
+  }
+  
+  // Create new publisher
+  const publisher = {
+    normalizedName: normalizedName,
+    displayName: displayName,
+    guid: generatePublisherGUID().toString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  
+  // Store publisher metadata
+  await env.R2_BUCKET_NAME.put(publisherKey, JSON.stringify(publisher, null, 2), {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: {
+      type: 'publisher',
+      normalizedName: normalizedName,
+      guid: publisher.guid
+    }
+  });
+  
+  return publisher;
+}
+
+async function getPublisher(normalizedName, env) {
+  const publisherKey = `publishers/${normalizedName}.json`;
+  try {
+    const existing = await env.R2_BUCKET_NAME.get(publisherKey);
+    if (existing) {
+      return await existing.json();
+    }
+  } catch (error) {
+    // Publisher doesn't exist
+  }
+  return null;
+}
+
+async function listPublishers(env) {
+  const publishers = [];
+  try {
+    const listResult = await env.R2_BUCKET_NAME.list({
+      prefix: 'publishers/',
+      delimiter: '/'
+    });
+    
+    if (listResult.objects && listResult.objects.length > 0) {
+      for (const obj of listResult.objects) {
+        if (obj.key.endsWith('.json')) {
+          try {
+            const publisherObj = await env.R2_BUCKET_NAME.get(obj.key);
+            if (publisherObj) {
+              const publisher = await publisherObj.json();
+              publishers.push(publisher);
+            }
+          } catch (error) {
+            // Skip invalid publisher files
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // Return empty array on error
+  }
+  return publishers;
+}
+
 // Generate unique filename
 function generateUniqueFilename(originalFilename) {
-  const timestamp = Date.now();
   const ext = originalFilename.split('.').pop() || 'zip';
   const base = originalFilename.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9-_]/g, '_');
-  return `${timestamp}-${base}.${ext}`;
+  return `${base}.${ext}`;
 }
 
 // Validate file type and size
@@ -46,8 +142,9 @@ function validateFile(file, env) {
   return true;
 }
 
-// Simple upload handler for files < 100MB
+// Simple upload handler for files < 100MB (protected endpoint)
 async function handleSimpleUpload(request, env) {
+  const correlationId = getCorrelationId(request);
   const formData = await request.formData();
   const file = formData.get('file');
   const providedSha256 = formData.get('sha256');
@@ -85,7 +182,8 @@ async function handleSimpleUpload(request, env) {
     key,
     filename,
     size: file.size,
-    location: `https://${env.R2_BUCKET_NAME.name}.r2.cloudflarestorage.com/${key}`
+    location: `https://${env.R2_BUCKET_NAME.name}.r2.cloudflarestorage.com/${key}`,
+    correlationId: correlationId
   };
 }
 
@@ -332,8 +430,9 @@ async function listFiles(request, env) {
   };
 }
 
-// Delete file endpoint
+// Delete file endpoint (requires admin key)
 async function deleteFile(request, env) {
+  const correlationId = getCorrelationId(request);
   const url = new URL(request.url);
   const key = url.pathname.split('/api/files/')[1];
   
@@ -345,7 +444,8 @@ async function deleteFile(request, env) {
   
   return {
     success: true,
-    message: 'File deleted successfully'
+    message: 'File deleted successfully',
+    correlationId: correlationId
   };
 }
 
@@ -376,6 +476,7 @@ async function healthCheck(env) {
 async function handleAPI(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
+  const correlationId = getCorrelationId(request);
   
   try {
     // Health check (no auth required)
@@ -387,7 +488,7 @@ async function handleAPI(request, env) {
       });
     }
     
-    // Route handlers
+    // Route handlers (all protected except /api/health)
     switch (pathname) {
       case '/api/upload':
         if (request.method !== 'POST') {
@@ -395,7 +496,7 @@ async function handleAPI(request, env) {
         }
         const simpleResult = await handleSimpleUpload(request, env);
         return new Response(JSON.stringify(simpleResult), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
         });
         
       case '/api/upload/multipart/init':
@@ -403,8 +504,8 @@ async function handleAPI(request, env) {
           throw new Error('Method not allowed');
         }
         const initResult = await initiateMultipartUpload(request, env);
-        return new Response(JSON.stringify(initResult), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        return new Response(JSON.stringify({ ...initResult, correlationId }), {
+          headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
         });
         
       case '/api/upload/multipart/part':
@@ -412,8 +513,8 @@ async function handleAPI(request, env) {
           throw new Error('Method not allowed');
         }
         const partResult = await uploadPart(request, env);
-        return new Response(JSON.stringify(partResult), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        return new Response(JSON.stringify({ ...partResult, correlationId }), {
+          headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
         });
         
       case '/api/upload/multipart/complete':
@@ -421,8 +522,8 @@ async function handleAPI(request, env) {
           throw new Error('Method not allowed');
         }
         const completeResult = await completeMultipartUpload(request, env);
-        return new Response(JSON.stringify(completeResult), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        return new Response(JSON.stringify({ ...completeResult, correlationId }), {
+          headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
         });
         
       case '/api/upload/multipart/abort':
@@ -430,15 +531,15 @@ async function handleAPI(request, env) {
           throw new Error('Method not allowed');
         }
         const abortResult = await abortMultipartUpload(request, env);
-        return new Response(JSON.stringify(abortResult), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        return new Response(JSON.stringify({ ...abortResult, correlationId }), {
+          headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
         });
         
       case '/api/search':
         if (request.method === 'GET') {
           const searchResult = await searchFiles(request, env);
-          return new Response(JSON.stringify(searchResult), {
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          return new Response(JSON.stringify({ ...searchResult, correlationId }), {
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
           });
         }
         throw new Error('Method not allowed');
@@ -446,13 +547,48 @@ async function handleAPI(request, env) {
       case '/api/files':
         if (request.method === 'GET') {
           const filesResult = await listFiles(request, env);
-          return new Response(JSON.stringify(filesResult), {
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          return new Response(JSON.stringify({ ...filesResult, correlationId }), {
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
+          });
+        }
+        throw new Error('Method not allowed');
+        
+      case '/api/publishers':
+        if (request.method === 'GET') {
+          const publishers = await listPublishers(env);
+          return new Response(JSON.stringify({ publishers, correlationId }), {
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
+          });
+        }
+        if (request.method === 'POST') {
+          const { displayName } = await request.json();
+          if (!displayName || typeof displayName !== 'string') {
+            throw new Error('displayName is required');
+          }
+          const publisher = await getOrCreatePublisher(displayName, env);
+          return new Response(JSON.stringify({ publisher, correlationId }), {
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
           });
         }
         throw new Error('Method not allowed');
         
       default:
+        if (pathname.startsWith('/api/publishers/') && request.method === 'GET') {
+          const normalizedName = decodeURIComponent(pathname.replace('/api/publishers/', ''));
+          if (!normalizedName) {
+            throw new Error('Publisher name is required');
+          }
+          const publisher = await getPublisher(normalizedName, env);
+          if (!publisher) {
+            return new Response(JSON.stringify({ error: 'Publisher not found', correlationId }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
+            });
+          }
+          return new Response(JSON.stringify({ publisher, correlationId }), {
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
+          });
+        }
         if (pathname.startsWith('/api/files-inline/') && request.method === 'GET') {
           const key = decodeURIComponent(pathname.replace('/api/files-inline/', ''));
           if (!key) {
@@ -460,15 +596,16 @@ async function handleAPI(request, env) {
           }
           const obj = await env.R2_BUCKET_NAME.get(key);
           if (!obj) {
-            return new Response(JSON.stringify({ error: 'File not found' }), {
+            return new Response(JSON.stringify({ error: 'File not found', correlationId }), {
               status: 404,
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
+              headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
             });
           }
           const filename = key.split('/').pop() || 'file';
           const headers = {
             'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
             'Content-Disposition': `inline; filename="${filename}"`,
+            'X-Correlation-ID': correlationId,
             ...corsHeaders,
             'Cache-Control': 'public, max-age=3600',
           };
@@ -479,7 +616,7 @@ async function handleAPI(request, env) {
         if (pathname.startsWith('/api/files/') && request.method === 'DELETE') {
           const deleteResult = await deleteFile(request, env);
           return new Response(JSON.stringify(deleteResult), {
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
           });
         }
         if (pathname.startsWith('/api/files/') && request.method === 'GET') {
@@ -490,19 +627,20 @@ async function handleAPI(request, env) {
           }
           const obj = await env.R2_BUCKET_NAME.get(key);
           if (!obj) {
-            return new Response(JSON.stringify({ error: 'File not found' }), {
+            return new Response(JSON.stringify({ error: 'File not found', correlationId }), {
               status: 404,
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
+              headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId, ...corsHeaders }
             });
           }
           const filename = key.split('/').pop() || 'file';
           const headers = {
             'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
             'Content-Disposition': `attachment; filename="${filename}"`,
+            'X-Correlation-ID': correlationId,
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
             'Access-Control-Allow-Headers': '*',
-            'Access-Control-Expose-Headers': 'ETag, X-Checksum-SHA256',
+            'Access-Control-Expose-Headers': 'ETag, X-Checksum-SHA256, X-Correlation-ID',
             'Cache-Control': 'public, max-age=3600',
           };
           if (obj.etag) headers['ETag'] = obj.etag;
@@ -513,32 +651,65 @@ async function handleAPI(request, env) {
     }
     
   } catch (error) {
-    console.error('API Error:', error);
+    const correlationIdForError = getCorrelationId(request);
+    logError('API request failed', error, {
+      correlationId: correlationIdForError,
+      pathname: pathname,
+      method: request.method
+    });
     
     return new Response(JSON.stringify({
       error: error.message || 'Internal server error',
+      correlationId: correlationIdForError,
       timestamp: new Date().toISOString()
     }), {
       status: error.message.includes('not found') ? 404 : 
               error.message.includes('not allowed') ? 405 :
               error.message.includes('required') ? 400 : 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationIdForError, ...corsHeaders }
     });
   }
+}
+
+// Wrapper for handleAPI that adds authentication
+// Health endpoint is handled separately (no auth)
+async function handleAPIAuth(request, env, ctx) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  const correlationId = getCorrelationId(request);
+  
+  // Health check endpoint - no auth required
+  if (pathname === '/api/health') {
+    // Log health check with correlation ID
+    console.log(JSON.stringify({
+      level: 'info',
+      message: 'Health check',
+      correlationId: correlationId,
+      pathname: pathname,
+      timestamp: new Date().toISOString()
+    }));
+    return handleAPI(request, env);
+  }
+  
+  // DELETE operations require admin key
+  const requireAdmin = pathname.startsWith('/api/files/') && request.method === 'DELETE';
+  
+  // Wrap with authentication middleware
+  return withAuth(handleAPI, requireAdmin)(request, env, ctx);
 }
 
 // Main worker handler
 export default {
   async fetch(request, env, ctx) {
-    // Handle CORS
+    // Handle CORS preflight (no auth required)
     const corsResponse = handleCORS(request);
     if (corsResponse) return corsResponse;
     
     const url = new URL(request.url);
     
-    // API routes
+    // API routes (protected with authentication)
     if (url.pathname.startsWith('/api/')) {
-      return handleAPI(request, env);
+      return handleAPIAuth(request, env, ctx);
     }
     
     // Default response
@@ -546,15 +717,18 @@ export default {
       service: 'zip-uploader-worker',
       message: 'Backend worker for large file uploads',
       endpoints: [
-        'GET /api/health',
-        'POST /api/upload',
-        'POST /api/upload/multipart/init',
-        'POST /api/upload/multipart/part',
-        'POST /api/upload/multipart/complete',
-        'POST /api/upload/multipart/abort',
-        'GET /api/search',
-        'GET /api/files',
-        'DELETE /api/files/{key}'
+        'GET /api/health (no auth required)',
+        'POST /api/upload (auth required)',
+        'POST /api/upload/multipart/init (auth required)',
+        'POST /api/upload/multipart/part (auth required)',
+        'POST /api/upload/multipart/complete (auth required)',
+        'POST /api/upload/multipart/abort (auth required)',
+        'GET /api/search (auth required)',
+        'GET /api/files (auth required)',
+        'DELETE /api/files/{key} (admin auth required)',
+        'GET /api/publishers (auth required)',
+        'POST /api/publishers (auth required)',
+        'GET /api/publishers/{normalizedName} (auth required)'
       ]
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }

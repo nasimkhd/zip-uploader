@@ -6,7 +6,21 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail --env staging | node tail/format-logs.js",
+    "tail:all": "wrangler tail --env staging | node tail/format-logs-all.js",
+    "tail:worker": "wrangler tail --env staging",
+    "tail:raw": "wrangler tail --env staging",
+    "test": "node test-runner.js",
+    "test:auth": "node test-auth.js",
+    "test:tail-parser": "node tail/test-parser.js",
+    "test:code-verification": "node test-code-verification.js",
+    "test:tail-formatter": "node test-tail-formatter.js",
+    "test:query-scripts": "node test-query-scripts.js",
+    "test:integration": "node test-integration.js",
+    "logs:query": "node tail/query-logs.js",
+    "logs:errors": "node tail/query-errors.js",
+    "logs:rotate": "node tail/rotate-logs.js",
+    "logs:verify": "node tail/verify-requirements.js"
   },
   "devDependencies": {
     "wrangler": "^4.45.1"
