@@ -84,25 +84,9 @@ rl.on('line', (line) => {
           formatted += ' ✓';
         }
         
-        // Extract correlation ID from logs, headers, or response body
+        // Extract correlation ID from logs or headers
         let correlationId = null;
-        
-        // First, check response headers for X-Correlation-ID
-        const responseHeaders = log.response?.headers || log.event?.response?.headers || {};
-        if (responseHeaders['X-Correlation-ID'] || responseHeaders['x-correlation-id']) {
-          correlationId = responseHeaders['X-Correlation-ID'] || responseHeaders['x-correlation-id'];
-        }
-        
-        // Also check request headers
-        if (!correlationId) {
-          const requestHeaders = log.request?.headers || log.event?.request?.headers || {};
-          if (requestHeaders['X-Correlation-ID'] || requestHeaders['x-correlation-id']) {
-            correlationId = requestHeaders['X-Correlation-ID'] || requestHeaders['x-correlation-id'];
-          }
-        }
-        
-        // Then check log messages
-        if (!correlationId && log.logs && log.logs.length > 0) {
+        if (log.logs && log.logs.length > 0) {
           // Try to find correlation ID in log messages
           for (const logEntry of log.logs) {
             const msg = Array.isArray(logEntry.message) ? logEntry.message.join(' ') : String(logEntry.message);
@@ -122,22 +106,6 @@ rl.on('line', (line) => {
             } catch (e) {
               // Not JSON, continue
             }
-          }
-        }
-        
-        // Finally, try to extract from response body if available
-        if (!correlationId) {
-          try {
-            const responseBody = log.response?.body || log.event?.response?.body;
-            if (responseBody) {
-              const bodyStr = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody);
-              const bodyMatch = bodyStr.match(/"correlationId"\s*:\s*"([a-f0-9-]{36})"/i);
-              if (bodyMatch) {
-                correlationId = bodyMatch[1];
-              }
-            }
-          } catch (e) {
-            // Couldn't parse response body
           }
         }
         
@@ -185,22 +153,6 @@ rl.on('line', (line) => {
       let formatted = `[${timestamp}] ${method} ${urlPath} → ${status}`;
       if (duration !== 'N/A') formatted += ` (${duration}ms)`;
       formatted += status < 300 ? ' ✓' : ' ⚠';
-      
-      // Extract correlation ID for other requests too
-      let correlationId = null;
-      const responseHeaders = log.response?.headers || log.event?.response?.headers || {};
-      if (responseHeaders['X-Correlation-ID'] || responseHeaders['x-correlation-id']) {
-        correlationId = responseHeaders['X-Correlation-ID'] || responseHeaders['x-correlation-id'];
-      }
-      if (!correlationId) {
-        const requestHeaders = log.request?.headers || log.event?.request?.headers || {};
-        if (requestHeaders['X-Correlation-ID'] || requestHeaders['x-correlation-id']) {
-          correlationId = requestHeaders['X-Correlation-ID'] || requestHeaders['x-correlation-id'];
-        }
-      }
-      if (correlationId) {
-        formatted += ` [${correlationId}]`;
-      }
       
       loggedCount++;
       writeToLog(formatted);

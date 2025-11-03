@@ -3,8 +3,10 @@
  * Validates X-API-Key header for protected endpoints
  */
 
+import type { Env, ApiValidationResult, LogContext } from './types.js';
+
 // CORS headers for use in responses
-const corsHeaders = {
+export const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Correlation-ID',
@@ -15,7 +17,7 @@ const corsHeaders = {
  * Generate correlation ID for request tracking
  * @returns {string} UUID v4 correlation ID
  */
-function generateCorrelationId() {
+export function generateCorrelationId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -28,18 +30,18 @@ function generateCorrelationId() {
  * @param {Request} request - The incoming request
  * @returns {string} Correlation ID
  */
-function getCorrelationId(request) {
+export function getCorrelationId(request: Request): string {
   return request.headers.get('X-Correlation-ID') || generateCorrelationId();
 }
 
 /**
  * Validate API key from request headers
  * @param {Request} request - The incoming request
- * @param {Object} env - Worker environment (contains API keys)
+ * @param {Env} env - Worker environment (contains API keys)
  * @param {boolean} requireAdmin - Whether admin key is required
- * @returns {{valid: boolean, error?: string, code?: string}} Validation result
+ * @returns {ApiValidationResult} Validation result
  */
-function validateApiKey(request, env, requireAdmin = false) {
+export function validateApiKey(request: Request, env: Env, requireAdmin = false): ApiValidationResult {
   const apiKey = request.headers.get('X-API-Key');
   
   // Check if key is present
@@ -98,7 +100,7 @@ function validateApiKey(request, env, requireAdmin = false) {
  * @param {string} correlationId - Correlation ID for tracking
  * @returns {Response} 401 Unauthorized response
  */
-function createUnauthorizedResponse(code, correlationId) {
+export function createUnauthorizedResponse(code: string, correlationId: string): Response {
   return new Response(JSON.stringify({
     error: 'Unauthorized',
     code: code,
@@ -118,8 +120,11 @@ function createUnauthorizedResponse(code, correlationId) {
  * @param {boolean} requireAdmin - Whether admin key is required
  * @returns {Function} Wrapped handler with authentication
  */
-function withAuth(handler, requireAdmin = false) {
-  return async (request, env, ctx) => {
+export function withAuth(
+  handler: (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>,
+  requireAdmin = false
+): (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response> {
+  return async (request: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
     const correlationId = getCorrelationId(request);
     const pathname = new URL(request.url).pathname;
     
@@ -136,7 +141,7 @@ function withAuth(handler, requireAdmin = false) {
         method: request.method,
         timestamp: new Date().toISOString()
       }));
-      return createUnauthorizedResponse(validation.code, correlationId);
+      return createUnauthorizedResponse(validation.code || 'UNKNOWN', correlationId);
     }
     
     // Log successful authentication with correlation ID
@@ -161,13 +166,4 @@ function withAuth(handler, requireAdmin = false) {
     return handler(modifiedRequest, env, ctx);
   };
 }
-
-export {
-  validateApiKey,
-  withAuth,
-  getCorrelationId,
-  generateCorrelationId,
-  createUnauthorizedResponse,
-  corsHeaders
-};
 

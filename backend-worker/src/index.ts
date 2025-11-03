@@ -5,21 +5,32 @@
 
 import { withAuth, getCorrelationId, corsHeaders } from './auth.js';
 import { logError, logInfo } from './logging.js';
+import type {
+  Env,
+  Publisher,
+  UploadResult,
+  MultipartInitResult,
+  MultipartPartResult,
+  MultipartCompleteResult,
+  FileInfo,
+  ListFilesResult,
+  SearchFilesResult,
+  HealthCheckResult
+} from './types.js';
 
 // Handle CORS preflight requests
-function handleCORS(request) {
+function handleCORS(request: Request): Response | null {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 200,
       headers: corsHeaders,
     });
   }
+  return null;
 }
 
-// No authentication required
-
 // Publisher management functions
-function normalizePublisherName(name) {
+function normalizePublisherName(name: string | null | undefined): string {
   if (!name || typeof name !== 'string') return 'unknown';
   
   // Remove accents and special characters
@@ -34,14 +45,14 @@ function normalizePublisherName(name) {
   return normalized;
 }
 
-function generatePublisherGUID() {
+function generatePublisherGUID(): number {
   // Generate a 10-digit numeric GUID
   const min = 1000000000; // 10 digits minimum
   const max = 9999999999; // 10 digits maximum
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-async function getOrCreatePublisher(displayName, env) {
+async function getOrCreatePublisher(displayName: string, env: Env): Promise<Publisher> {
   const normalizedName = normalizePublisherName(displayName);
   const publisherKey = `publishers/${normalizedName}.json`;
   
@@ -49,7 +60,7 @@ async function getOrCreatePublisher(displayName, env) {
     // Try to get existing publisher
     const existing = await env.R2_BUCKET_NAME.get(publisherKey);
     if (existing) {
-      const publisher = await existing.json();
+      const publisher = await existing.json<Publisher>();
       return publisher;
     }
   } catch (error) {
@@ -57,7 +68,7 @@ async function getOrCreatePublisher(displayName, env) {
   }
   
   // Create new publisher
-  const publisher = {
+  const publisher: Publisher = {
     normalizedName: normalizedName,
     displayName: displayName,
     guid: generatePublisherGUID().toString(),
@@ -78,12 +89,12 @@ async function getOrCreatePublisher(displayName, env) {
   return publisher;
 }
 
-async function getPublisher(normalizedName, env) {
+async function getPublisher(normalizedName: string, env: Env): Promise<Publisher | null> {
   const publisherKey = `publishers/${normalizedName}.json`;
   try {
     const existing = await env.R2_BUCKET_NAME.get(publisherKey);
     if (existing) {
-      return await existing.json();
+      return await existing.json<Publisher>();
     }
   } catch (error) {
     // Publisher doesn't exist
@@ -91,8 +102,8 @@ async function getPublisher(normalizedName, env) {
   return null;
 }
 
-async function listPublishers(env) {
-  const publishers = [];
+async function listPublishers(env: Env): Promise<Publisher[]> {
+  const publishers: Publisher[] = [];
   try {
     const listResult = await env.R2_BUCKET_NAME.list({
       prefix: 'publishers/',
@@ -105,7 +116,7 @@ async function listPublishers(env) {
           try {
             const publisherObj = await env.R2_BUCKET_NAME.get(obj.key);
             if (publisherObj) {
-              const publisher = await publisherObj.json();
+              const publisher = await publisherObj.json<Publisher>();
               publishers.push(publisher);
             }
           } catch (error) {
@@ -121,15 +132,15 @@ async function listPublishers(env) {
 }
 
 // Generate unique filename
-function generateUniqueFilename(originalFilename) {
+function generateUniqueFilename(originalFilename: string): string {
   const ext = originalFilename.split('.').pop() || 'zip';
   const base = originalFilename.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9-_]/g, '_');
   return `${base}.${ext}`;
 }
 
 // Validate file type and size
-function validateFile(file, env) {
-  const maxSize = parseInt(env.MAX_FILE_SIZE) || 5368709120; // 5GB default
+function validateFile(file: File, env: Env): boolean {
+  const maxSize = parseInt(env.MAX_FILE_SIZE || '5368709120', 10); // 5GB default
   
   if (file.size > maxSize) {
     throw new Error(`File too large. Maximum size: ${Math.round(maxSize / 1024 / 1024)}MB`);
@@ -143,11 +154,11 @@ function validateFile(file, env) {
 }
 
 // Simple upload handler for files < 100MB (protected endpoint)
-async function handleSimpleUpload(request, env) {
+async function handleSimpleUpload(request: Request, env: Env): Promise<UploadResult> {
   const correlationId = getCorrelationId(request);
   const formData = await request.formData();
-  const file = formData.get('file');
-  const providedSha256 = formData.get('sha256');
+  const file = formData.get('file') as File | null;
+  const providedSha256 = formData.get('sha256') as string | null;
   
   if (!file) {
     throw new Error('No file provided');
@@ -160,7 +171,7 @@ async function handleSimpleUpload(request, env) {
   
   // Upload directly to R2 using binding
   // Build metadata (include sha256 if provided)
-  const customMetadata = {
+  const customMetadata: Record<string, string> = {
     originalName: file.name,
     uploadedAt: new Date().toISOString(),
     uploadType: 'simple'
@@ -188,14 +199,15 @@ async function handleSimpleUpload(request, env) {
 }
 
 // Multipart upload handlers
-async function initiateMultipartUpload(request, env) {
-  const { filename, size, contentType, sha256 } = await request.json();
+async function initiateMultipartUpload(request: Request, env: Env): Promise<MultipartInitResult> {
+  const body = await request.json<{ filename: string; size: number; contentType?: string; sha256?: string }>();
+  const { filename, size, contentType, sha256 } = body;
   
   if (!filename || !size) {
     throw new Error('Filename and size are required');
   }
   
-  const maxSize = parseInt(env.MAX_FILE_SIZE) || 5368709120;
+  const maxSize = parseInt(env.MAX_FILE_SIZE || '5368709120', 10);
   if (size > maxSize) {
     throw new Error(`File too large. Maximum size: ${Math.round(maxSize / 1024 / 1024)}MB`);
   }
@@ -204,20 +216,21 @@ async function initiateMultipartUpload(request, env) {
   const key = `uploads/${uniqueFilename}`;
   
   // Initiate multipart upload using R2 binding
+  const customMetadata: Record<string, string> = {
+    originalName: filename,
+    uploadedAt: new Date().toISOString(),
+    uploadType: 'multipart'
+  };
+  if (sha256 && typeof sha256 === 'string') {
+    customMetadata.sha256 = sha256;
+  }
+  
   const multipart = await env.R2_BUCKET_NAME.createMultipartUpload(key, {
     httpMetadata: { 
       contentType: contentType || 'application/zip',
       cacheControl: 'public, max-age=3600'
     },
-    customMetadata: (function(){
-      const meta = {
-        originalName: filename,
-        uploadedAt: new Date().toISOString(),
-        uploadType: 'multipart'
-      };
-      if (sha256 && typeof sha256 === 'string') meta.sha256 = sha256;
-      return meta;
-    })()
+    customMetadata
   });
   
   return {
@@ -227,20 +240,25 @@ async function initiateMultipartUpload(request, env) {
   };
 }
 
-async function uploadPart(request, env) {
+async function uploadPart(request: Request, env: Env): Promise<MultipartPartResult> {
   const formData = await request.formData();
-  const chunk = formData.get('chunk');
-  const key = formData.get('key');
-  const uploadId = formData.get('uploadId');
-  const partNumber = parseInt(formData.get('partNumber'));
+  const chunk = formData.get('chunk') as File | Blob | null;
+  const key = formData.get('key') as string | null;
+  const uploadId = formData.get('uploadId') as string | null;
+  const partNumberStr = formData.get('partNumber') as string | null;
   
-  if (!chunk || !key || !uploadId || !partNumber) {
+  if (!chunk || !key || !uploadId || !partNumberStr) {
     throw new Error('Missing required fields: chunk, key, uploadId, partNumber');
+  }
+  
+  const partNumber = parseInt(partNumberStr, 10);
+  if (isNaN(partNumber)) {
+    throw new Error('Invalid partNumber');
   }
   
   // Upload part using R2 multipart session
   const multipart = await env.R2_BUCKET_NAME.resumeMultipartUpload(key, uploadId);
-  const body = typeof chunk?.stream === 'function' ? chunk.stream() : chunk;
+  const body = chunk instanceof File && typeof chunk.stream === 'function' ? chunk.stream() : chunk;
   const uploadedPart = await multipart.uploadPart(partNumber, body);
   
   return {
@@ -250,8 +268,9 @@ async function uploadPart(request, env) {
   };
 }
 
-async function completeMultipartUpload(request, env) {
-  const { key, uploadId, parts } = await request.json();
+async function completeMultipartUpload(request: Request, env: Env): Promise<MultipartCompleteResult> {
+  const body = await request.json<{ key: string; uploadId: string; parts: Array<{ PartNumber: number; ETag: string }> }>();
+  const { key, uploadId, parts } = body;
   
   if (!key || !uploadId || !parts || !Array.isArray(parts)) {
     throw new Error('Missing required fields: key, uploadId, parts');
@@ -259,7 +278,7 @@ async function completeMultipartUpload(request, env) {
   
   // Validate parts array
   const validatedParts = parts.map(part => ({
-    PartNumber: parseInt(part.PartNumber),
+    PartNumber: parseInt(String(part.PartNumber), 10),
     ETag: part.ETag
   }));
   
@@ -275,8 +294,9 @@ async function completeMultipartUpload(request, env) {
   };
 }
 
-async function abortMultipartUpload(request, env) {
-  const { key, uploadId } = await request.json();
+async function abortMultipartUpload(request: Request, env: Env): Promise<{ success: boolean; message: string }> {
+  const body = await request.json<{ key: string; uploadId: string }>();
+  const { key, uploadId } = body;
   
   if (!key || !uploadId) {
     throw new Error('Missing required fields: key, uploadId');
@@ -293,7 +313,7 @@ async function abortMultipartUpload(request, env) {
 }
 
 // Recursive search endpoint
-async function searchFiles(request, env) {
+async function searchFiles(request: Request, env: Env): Promise<SearchFilesResult> {
   const url = new URL(request.url);
   const rawPrefix = url.searchParams.get('prefix') || 'feeds/';
   const q = (url.searchParams.get('q') || '').trim();
@@ -330,9 +350,9 @@ async function searchFiles(request, env) {
 
   // Perform recursive listing (omit delimiter) and filter by query
   const queryLower = q.toLowerCase();
-  let matches = [];
-  let nextCursor = cursor;
-  let lastCursor = null;
+  const matches: FileInfo[] = [];
+  let nextCursor: string | undefined = cursor;
+  let lastCursor: string | null = null;
   let anyTruncated = false;
 
   // Safeguard: do at most 10 pages per request to bound latency
@@ -354,7 +374,7 @@ async function searchFiles(request, env) {
       obj.key && obj.key.toLowerCase().includes(queryLower)
     ).map(obj => ({
       key: obj.key,
-      filename: obj.key.split('/').pop(),
+      filename: obj.key.split('/').pop() || obj.key,
       size: obj.size,
       lastModified: obj.uploaded,
       etag: obj.etag,
@@ -381,7 +401,7 @@ async function searchFiles(request, env) {
 }
 
 // List files endpoint
-async function listFiles(request, env) {
+async function listFiles(request: Request, env: Env): Promise<ListFilesResult> {
   const url = new URL(request.url);
   const rawPrefix = url.searchParams.get('prefix') || 'feeds/';
   const rawLimit = url.searchParams.get('limit');
@@ -413,9 +433,9 @@ async function listFiles(request, env) {
   });
 
   const folders = Array.isArray(listResult.delimitedPrefixes) ? listResult.delimitedPrefixes : [];
-  const files = (listResult.objects || []).map(obj => ({
+  const files: FileInfo[] = (listResult.objects || []).map(obj => ({
     key: obj.key,
-    filename: obj.key.split('/').pop(),
+    filename: obj.key.split('/').pop() || obj.key,
     size: obj.size,
     lastModified: obj.uploaded,
     etag: obj.etag
@@ -431,10 +451,11 @@ async function listFiles(request, env) {
 }
 
 // Delete file endpoint (requires admin key)
-async function deleteFile(request, env) {
+async function deleteFile(request: Request, env: Env): Promise<{ success: boolean; message: string; correlationId: string }> {
   const correlationId = getCorrelationId(request);
   const url = new URL(request.url);
-  const key = url.pathname.split('/api/files/')[1];
+  const keyMatch = url.pathname.match(/\/api\/files\/(.+)$/);
+  const key = keyMatch ? keyMatch[1] : null;
   
   if (!key) {
     throw new Error('File key is required');
@@ -450,7 +471,7 @@ async function deleteFile(request, env) {
 }
 
 // Health check endpoint
-async function healthCheck(env) {
+async function healthCheck(env: Env): Promise<HealthCheckResult> {
   try {
     // Test R2 connection
     await env.R2_BUCKET_NAME.list({ limit: 1 });
@@ -462,18 +483,19 @@ async function healthCheck(env) {
       timestamp: new Date().toISOString()
     };
   } catch (error) {
+    const err = error instanceof Error ? error : new Error('Unknown error');
     return {
       status: 'unhealthy',
       service: 'zip-uploader-worker',
       r2_connected: false,
-      error: error.message,
+      error: err.message,
       timestamp: new Date().toISOString()
     };
   }
 }
 
 // Main API handler
-async function handleAPI(request, env) {
+async function handleAPI(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const pathname = url.pathname;
   const correlationId = getCorrelationId(request);
@@ -561,7 +583,8 @@ async function handleAPI(request, env) {
           });
         }
         if (request.method === 'POST') {
-          const { displayName } = await request.json();
+          const body = await request.json<{ displayName: string }>();
+          const { displayName } = body;
           if (!displayName || typeof displayName !== 'string') {
             throw new Error('displayName is required');
           }
@@ -602,15 +625,15 @@ async function handleAPI(request, env) {
             });
           }
           const filename = key.split('/').pop() || 'file';
-          const headers = {
-            'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
+          const headers: Record<string, string> = {
+            'Content-Type': (obj.httpMetadata?.contentType) || 'application/octet-stream',
             'Content-Disposition': `inline; filename="${filename}"`,
             'X-Correlation-ID': correlationId,
             ...corsHeaders,
             'Cache-Control': 'public, max-age=3600',
           };
           if (obj.etag) headers['ETag'] = obj.etag;
-          if (obj.customMetadata && obj.customMetadata.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
+          if (obj.customMetadata?.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
           return new Response(obj.body, { headers });
         }
         if (pathname.startsWith('/api/files/') && request.method === 'DELETE') {
@@ -633,8 +656,8 @@ async function handleAPI(request, env) {
             });
           }
           const filename = key.split('/').pop() || 'file';
-          const headers = {
-            'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
+          const headers: Record<string, string> = {
+            'Content-Type': (obj.httpMetadata?.contentType) || 'application/octet-stream',
             'Content-Disposition': `attachment; filename="${filename}"`,
             'X-Correlation-ID': correlationId,
             'Access-Control-Allow-Origin': '*',
@@ -644,7 +667,7 @@ async function handleAPI(request, env) {
             'Cache-Control': 'public, max-age=3600',
           };
           if (obj.etag) headers['ETag'] = obj.etag;
-          if (obj.customMetadata && obj.customMetadata.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
+          if (obj.customMetadata?.sha256) headers['X-Checksum-SHA256'] = obj.customMetadata.sha256;
           return new Response(obj.body, { headers });
         }
         throw new Error('Endpoint not found');
@@ -652,20 +675,21 @@ async function handleAPI(request, env) {
     
   } catch (error) {
     const correlationIdForError = getCorrelationId(request);
-    logError('API request failed', error, {
+    const err = error instanceof Error ? error : new Error('Unknown error');
+    logError('API request failed', err, {
       correlationId: correlationIdForError,
       pathname: pathname,
       method: request.method
     });
     
     return new Response(JSON.stringify({
-      error: error.message || 'Internal server error',
+      error: err.message || 'Internal server error',
       correlationId: correlationIdForError,
       timestamp: new Date().toISOString()
     }), {
-      status: error.message.includes('not found') ? 404 : 
-              error.message.includes('not allowed') ? 405 :
-              error.message.includes('required') ? 400 : 500,
+      status: err.message.includes('not found') ? 404 : 
+              err.message.includes('not allowed') ? 405 :
+              err.message.includes('required') ? 400 : 500,
       headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationIdForError, ...corsHeaders }
     });
   }
@@ -673,7 +697,7 @@ async function handleAPI(request, env) {
 
 // Wrapper for handleAPI that adds authentication
 // Health endpoint is handled separately (no auth)
-async function handleAPIAuth(request, env, ctx) {
+async function handleAPIAuth(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const pathname = url.pathname;
   const correlationId = getCorrelationId(request);
@@ -700,7 +724,7 @@ async function handleAPIAuth(request, env, ctx) {
 
 // Main worker handler
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Handle CORS preflight (no auth required)
     const corsResponse = handleCORS(request);
     if (corsResponse) return corsResponse;

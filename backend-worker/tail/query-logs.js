@@ -14,7 +14,6 @@ if (!correlationId) {
 }
 
 const logFile = path.join(__dirname, '../logs/tail.log');
-const filterLogFile = path.join(__dirname, '../logs/filter.log');
 
 if (!fs.existsSync(logFile)) {
   console.error(`Log file not found: ${logFile}`);
@@ -22,21 +21,11 @@ if (!fs.existsSync(logFile)) {
   process.exit(1);
 }
 
-// Read both tail.log and filter.log if it exists
-let content = fs.readFileSync(logFile, 'utf8');
-if (fs.existsSync(filterLogFile)) {
-  const filterContent = fs.readFileSync(filterLogFile, 'utf8');
-  content += '\n' + filterContent;
-}
-
+const content = fs.readFileSync(logFile, 'utf8');
 const lines = content.split('\n');
 
-// Enhanced matching: look for correlation ID with flexible pattern matching
-// Match UUID format with optional hyphens/dashes
-const correlationIdPattern = new RegExp(
-  correlationId.replace(/[-]/g, '[-]?'), 
-  'i'
-);
+// Enhanced matching: look for correlation ID in brackets or in log content
+const correlationIdPattern = new RegExp(correlationId.replace(/[-]/g, '[-]?'), 'i');
 const matches = lines.filter(line => {
   // Check if line contains the correlation ID
   if (correlationIdPattern.test(line)) {

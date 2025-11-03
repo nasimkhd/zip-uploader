@@ -5,28 +5,30 @@
 
 import { APP_CSS } from './assets/app.css.js';
 import { APP_JS } from './assets/app.js';
+import type { Env } from './types.js';
 
 // CORS headers
-const corsHeaders = {
+const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
 };
 
 // Handle CORS preflight requests
-function handleCORS(request) {
+function handleCORS(request: Request): Response | null {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 200,
       headers: corsHeaders,
     });
   }
+  return null;
 }
 
 // Upload Manager is injected into page HTML
 
 // Serve static files
-async function serveStaticFile(request, env) {
+async function serveStaticFile(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const pathname = url.pathname;
   
@@ -56,7 +58,7 @@ async function serveStaticFile(request, env) {
 }
 
 // Unified single-page app containing both Upload and Files views
-function getAppPage(env) {
+function getAppPage(env: Env): string {
   const BACKEND_URL = env.BACKEND_WORKER_URL || '';
   const API_KEY = env.API_KEY_PUBLIC || '';
   return `
@@ -183,7 +185,7 @@ function getAppPage(env) {
 
 // Main worker handler
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Handle CORS
     const corsResponse = handleCORS(request);
     if (corsResponse) return corsResponse;
