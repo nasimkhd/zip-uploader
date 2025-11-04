@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 /**
  * Structured Logging Utilities
  * Provides consistent JSON-formatted logging with correlation IDs
@@ -72,4 +74,5 @@ export function logDebug(message: string, context: LogContext = {}): void {
 export {
   createLogEntry,
 };
+
 

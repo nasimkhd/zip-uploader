@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 /**
  * API Key Authentication Middleware
  * Validates X-API-Key header for protected endpoints
@@ -166,4 +168,5 @@ export function withAuth(
     return handler(modifiedRequest, env, ctx);
   };
 }
+
 
